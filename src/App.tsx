@@ -3,6 +3,7 @@ import './App.css';
 import { GraphView } from './GraphView';
 import type { GraphData, GraphNode } from './types';
 import { searchGene } from './api/gene';
+import { parseQuery } from './api/parse';
 import { fetchPubmedForGene } from './api/pubmed';
 import { fetchProteinsForGene } from './api/protein';
 
@@ -34,7 +35,10 @@ export default function App() {
     setLoading(true);
     setError(null);
     try {
-      const hit = await searchGene(term.trim());
+      // Natural language ("Look up TP53 in humans") is parsed server-side; falls
+      // back to a literal gene term if parsing is unavailable.
+      const { term: geneRef, organism } = await parseQuery(term);
+      const hit = await searchGene(geneRef, organism);
       if (!hit) {
         setError(`No gene found for "${term}"`);
         return;

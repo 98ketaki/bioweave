@@ -8,6 +8,7 @@
 import { esearchGene, esummaryGene } from '../gene_db/ncbiClient';
 import { normalizeGeneSummary } from '../gene_db/normalizeGeneRecord';
 import { readSearchCache, writeSearchCache } from './searchCache';
+import type { OrganismInput } from '../gene_db/types';
 
 export interface GeneHit {
   uid: string;
@@ -21,19 +22,21 @@ export interface GeneHit {
 
 const HUMAN = { scientificName: 'Homo sapiens', commonName: 'human' };
 
-export async function searchGene(term: string): Promise<GeneHit | null> {
+export async function searchGene(term: string, organism: OrganismInput = HUMAN): Promise<GeneHit | null> {
   const ref = term.trim();
+  // Cache per term + organism so a human lookup can't shadow another organism's.
+  const cacheKey = `${ref}|${organism.scientificName}`;
 
-  const cached = readSearchCache<GeneHit | null>(ref);
+  const cached = readSearchCache<GeneHit | null>(cacheKey);
   if (cached !== null) return cached;
 
-  // Symbol-/name-scoped lookup: human first, then any organism. We never fall
-  // back to an all-fields search — that ranks by gene "weight" and returns
-  // well-studied genes that merely mention the term (e.g. "insulin" -> TP53).
-  let search = await esearchGene(ref, HUMAN, 1, ref);
+  // Symbol-/name-scoped lookup: requested organism first, then any organism. We
+  // never fall back to an all-fields search — that ranks by gene "weight" and
+  // returns well-studied genes that merely mention the term ("insulin" -> TP53).
+  let search = await esearchGene(ref, organism, 1, ref);
   if (search.ids.length === 0) search = await esearchGene(ref, undefined, 1, ref);
   if (search.ids.length === 0) {
-    writeSearchCache<GeneHit | null>(ref, null);
+    writeSearchCache<GeneHit | null>(cacheKey, null);
     return null;
   }
 
@@ -47,6 +50,6 @@ export async function searchGene(term: string): Promise<GeneHit | null> {
     summary: record.refSeqSummary ?? undefined,
     raw: record,
   };
-  writeSearchCache(ref, hit);
+  writeSearchCache(cacheKey, hit);
   return hit;
 }
