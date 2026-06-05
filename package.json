@@ -9,6 +9,7 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "demo": "tsx src/demo.ts",
+    "ask-demo": "tsx src/ask-demo.ts",
     "typecheck:backend": "tsc -p tsconfig.backend.json"
   },
   "dependencies": {

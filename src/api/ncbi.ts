@@ -45,6 +45,14 @@ async function getJson(url: string): Promise<any> {
   });
 }
 
+async function getText(url: string): Promise<string> {
+  return rateLimited(async () => {
+    const r = await fetch(withCommon(url));
+    if (!r.ok) throw new Error(`NCBI ${r.status} ${r.statusText}`);
+    return r.text();
+  });
+}
+
 export async function esearch(db: string, term: string, retmax = 5): Promise<string[]> {
   const url = `${NCBI_BASE}/esearch.fcgi?db=${db}&term=${encodeURIComponent(term)}&retmode=json&retmax=${retmax}`;
   const j = await getJson(url);
@@ -76,4 +84,16 @@ export async function elink(
     }
   }
   return out;
+}
+
+// efetch returns XML/plain text (not JSON) — used to pull PubMed abstracts.
+export async function efetch(
+  db: string,
+  ids: string[],
+  rettype = 'abstract',
+  retmode = 'xml',
+): Promise<string> {
+  if (!ids.length) return '';
+  const url = `${NCBI_BASE}/efetch.fcgi?db=${db}&id=${ids.join(',')}&rettype=${rettype}&retmode=${retmode}`;
+  return getText(url);
 }
