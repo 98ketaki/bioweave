@@ -9,6 +9,13 @@ const COLORS: Record<GraphNode['kind'], string> = {
   'related-gene': '#7c3aed',
 };
 
+const LEGEND: { kind: GraphNode['kind']; label: string }[] = [
+  { kind: 'gene', label: 'Gene' },
+  { kind: 'protein', label: 'Protein' },
+  { kind: 'pubmed', label: 'PubMed paper' },
+  { kind: 'related-gene', label: 'Related gene' },
+];
+
 interface Props {
   data: GraphData;
   onNodeClick?: (node: GraphNode) => void;
@@ -130,6 +137,7 @@ export function GraphView({ data, onNodeClick, height = 600 }: Props) {
     <div
       ref={containerRef}
       style={{
+        position: 'relative',
         flex: 1,
         minWidth: 0,
         border: '1px solid #e5e7eb',
@@ -145,6 +153,43 @@ export function GraphView({ data, onNodeClick, height = 600 }: Props) {
         viewBox={`0 0 ${width} ${height}`}
         style={{ display: 'block' }}
       />
+      <div
+        style={{
+          position: 'absolute',
+          top: 10,
+          left: 10,
+          background: 'rgba(255,255,255,0.92)',
+          border: '1px solid #e5e7eb',
+          borderRadius: 6,
+          padding: '8px 10px',
+          fontSize: 11,
+          fontFamily: 'system-ui, sans-serif',
+          color: '#374151',
+          boxShadow: '0 1px 2px rgba(0,0,0,0.04)',
+          pointerEvents: 'none',
+        }}
+      >
+        <div style={{ fontWeight: 600, marginBottom: 4 }}>Legend</div>
+        {LEGEND.map(({ kind, label }) => (
+          <div
+            key={kind}
+            style={{ display: 'flex', alignItems: 'center', gap: 6, lineHeight: '16px' }}
+          >
+            <span
+              style={{
+                display: 'inline-block',
+                width: 10,
+                height: 10,
+                borderRadius: '50%',
+                background: COLORS[kind],
+                border: '1px solid #fff',
+                boxShadow: '0 0 0 1px rgba(0,0,0,0.08)',
+              }}
+            />
+            {label}
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
