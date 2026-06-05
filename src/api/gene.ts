@@ -1,16 +1,12 @@
-// KETAKI: fill this in.
+// Gene search for the graph: resolve a free-text symbol (e.g. "BRCA1", "TP53")
+// to a single best-match Entrez Gene record.
 //
-// Goal: given a search term like "BRCA1" or "TP53", return a GeneHit
-// with the Entrez Gene UID + a summary record we can show in the graph.
-//
-// Suggested steps (use helpers in ./ncbi.ts):
-//   1. const ids = await esearch('gene', term, 1);
-//   2. const summary = await esummary('gene', ids);  -> summary[uid]
-//   3. Return { uid, name, description, aliases, chromosome, summary }.
-//
-// The App will then call expandGene(uid) to fan out to protein / pubmed.
+// Search scoping and summary normalization are shared with the Node
+// gene-resolution pipeline via ../gene_db, so the graph app and the pipeline
+// resolve genes identically (symbol-scoped search, consistent fields).
 
-import { esearch, esummary } from './ncbi';
+import { esearchGene, esummaryGene } from '../gene_db/ncbiClient';
+import { normalizeGeneSummary } from '../gene_db/normalizeGeneRecord';
 
 export interface GeneHit {
   uid: string;
@@ -19,28 +15,29 @@ export interface GeneHit {
   aliases?: string[];
   chromosome?: string;
   summary?: string;
-  raw?: any;
+  raw?: unknown;
 }
 
+const HUMAN = { scientificName: 'Homo sapiens', commonName: 'human' };
+
 export async function searchGene(term: string): Promise<GeneHit | null> {
-  // TODO(ketaki): implement using esearch + esummary.
-  // Prefer human matches; fall back to any organism if none found.
-  const humanTerm = /\[orgn\]|\[organism\]/i.test(term)
-    ? term
-    : `${term}[sym] AND human[orgn]`;
-  let ids = await esearch('gene', humanTerm, 1);
-  if (!ids.length) ids = await esearch('gene', term, 1);
-  if (!ids.length) return null;
-  const result = await esummary('gene', ids);
-  const uid = ids[0];
-  const r = result[uid] ?? {};
+  const symbol = term.trim();
+
+  // Mirror the pipeline's resolution order: a precise human symbol-scoped match
+  // first, then a broad human search, then any organism.
+  let search = await esearchGene(symbol, HUMAN, 1, symbol);
+  if (search.ids.length === 0) search = await esearchGene(symbol, HUMAN, 1);
+  if (search.ids.length === 0) search = await esearchGene(symbol, undefined, 1);
+  if (search.ids.length === 0) return null;
+
+  const record = normalizeGeneSummary(await esummaryGene(search.ids[0]));
   return {
-    uid,
-    name: r.name ?? term,
-    description: r.description ?? '',
-    aliases: typeof r.otheraliases === 'string' ? r.otheraliases.split(', ') : [],
-    chromosome: r.chromosome,
-    summary: r.summary,
-    raw: r,
+    uid: record.geneUid,
+    name: record.officialSymbol || term,
+    description: record.description ?? record.fullName ?? '',
+    aliases: record.aliases,
+    chromosome: record.chromosomeLocation ?? undefined,
+    summary: record.refSeqSummary ?? undefined,
+    raw: record,
   };
 }

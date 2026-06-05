@@ -1,15 +1,16 @@
-// Stub: gene -> protein records via elink. Fill in later.
+// Gene -> protein records: follow the gene->protein elink, then summarize.
 
-import { elink, esummary } from './ncbi';
+import { esummary } from './ncbi';
+import { elinkGeneToDb } from '../gene_db/ncbiClient';
 
 export interface ProteinHit {
   uid: string;
   title: string;
-  raw?: any;
+  raw?: unknown;
 }
 
 export async function fetchProteinsForGene(geneUid: string, limit = 5): Promise<ProteinHit[]> {
-  const ids = (await elink('gene', 'protein', [geneUid])).slice(0, limit);
+  const ids = (await elinkGeneToDb(geneUid, 'protein')).slice(0, limit);
   if (!ids.length) return [];
   const result = await esummary('protein', ids);
   return ids.map((uid) => ({
