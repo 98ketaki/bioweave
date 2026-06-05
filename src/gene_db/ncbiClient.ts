@@ -1,37 +1,7 @@
-import type { GeneQuery, OrganismInput } from './types';
+import type { OrganismInput } from './types';
+import { esearch, esummary, elink } from '../api/ncbi';
 
-const EUTILS_BASE = 'https://eutils.ncbi.nlm.nih.gov/entrez/eutils';
 const DEFAULT_SEARCH_MAX = 10;
-
-// NCBI E-utilities cap unauthenticated clients at 3 requests/sec (10/sec with an
-// API key). The pipeline fires several calls back-to-back, so serialize them and
-// keep a minimum gap between requests to avoid HTTP 429 responses.
-const NCBI_API_KEY = process.env.NCBI_API_KEY;
-const MIN_REQUEST_GAP_MS = NCBI_API_KEY ? 110 : 350;
-let requestChain: Promise<unknown> = Promise.resolve();
-
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function throttledFetch(url: string): Promise<Response> {
-  const result = requestChain.then(() => fetch(url));
-  // Advance the chain only after the spacing delay so the next call waits its turn.
-  requestChain = result.then(
-    () => delay(MIN_REQUEST_GAP_MS),
-    () => delay(MIN_REQUEST_GAP_MS),
-  );
-  return result;
-}
-
-function buildUrl(path: string, params: Record<string, string>): string {
-  const url = new URL(`${EUTILS_BASE}/${path}`);
-  Object.entries(params).forEach(([key, value]) => url.searchParams.set(key, value));
-  if (NCBI_API_KEY) {
-    url.searchParams.set('api_key', NCBI_API_KEY);
-  }
-  return url.toString();
-}
 
 function combineSearchTerm(query: string, organism?: OrganismInput, symbol?: string): string {
   // When a concrete gene symbol is known, scope the search to the gene-name
@@ -43,12 +13,6 @@ function combineSearchTerm(query: string, organism?: OrganismInput, symbol?: str
   }
 
   return `${sanitized} AND ${organism.scientificName}[Organism]`;
-}
-
-function checkFetchStatus(response: Response, context: string) {
-  if (!response.ok) {
-    throw new Error(`NCBI ${context} request failed with status ${response.status}`);
-  }
 }
 
 export type NCBISearchResponse = {
@@ -73,6 +37,11 @@ export type NCBISummaryRecord = {
   summary?: string;
 };
 
+// Typed, gene-domain wrappers over the shared NCBI E-utilities client in
+// ../api/ncbi. That module owns the HTTP plumbing, polite tagging, and the
+// shared rate-limit queue; this layer adds gene-specific search scoping and
+// the summary record shape the resolver expects.
+
 export async function esearchGene(
   query: string,
   organism?: OrganismInput,
@@ -80,33 +49,13 @@ export async function esearchGene(
   symbol?: string,
 ): Promise<NCBISearchResponse> {
   const term = combineSearchTerm(query, organism, symbol);
-  const url = buildUrl('esearch.fcgi', {
-    db: 'gene',
-    term,
-    retmode: 'json',
-    retmax: String(maxResults),
-  });
-
-  const response = await throttledFetch(url);
-  checkFetchStatus(response, 'esearch');
-  const payload = (await response.json()) as any;
-  const ids = Array.isArray(payload?.esearchresult?.idlist) ? payload.esearchresult.idlist : [];
-  const count = Number(payload?.esearchresult?.count ?? ids.length);
-
-  return { ids, count };
+  const ids = await esearch('gene', term, maxResults);
+  return { ids, count: ids.length };
 }
 
 export async function esummaryGene(geneUid: string): Promise<NCBISummaryRecord> {
-  const url = buildUrl('esummary.fcgi', {
-    db: 'gene',
-    id: geneUid,
-    retmode: 'json',
-  });
-
-  const response = await throttledFetch(url);
-  checkFetchStatus(response, 'esummary');
-  const payload = (await response.json()) as any;
-  const record = payload?.result?.[geneUid];
+  const result = await esummary('gene', [geneUid]);
+  const record = result[geneUid];
   if (!record) {
     throw new Error(`NCBI esummary returned no summary for gene UID ${geneUid}`);
   }
@@ -118,40 +67,13 @@ export async function esummaryGenes(geneUids: string[]): Promise<NCBISummaryReco
   if (geneUids.length === 0) {
     return [];
   }
-  const url = buildUrl('esummary.fcgi', {
-    db: 'gene',
-    id: geneUids.join(','),
-    retmode: 'json',
-  });
 
-  const response = await throttledFetch(url);
-  checkFetchStatus(response, 'esummary');
-  const payload = (await response.json()) as any;
-  const results = geneUids
-    .map((uid) => {
-      const record = payload?.result?.[uid];
-      return record ? { uid, ...record } : null;
-    })
-    .filter(Boolean);
-  return results;
+  const result = await esummary('gene', geneUids);
+  return geneUids
+    .map((uid) => (result[uid] ? { uid, ...result[uid] } : null))
+    .filter(Boolean) as NCBISummaryRecord[];
 }
 
 export async function elinkGeneToDb(geneUid: string, targetDb: 'protein' | 'pubmed'): Promise<string[]> {
-  const url = buildUrl('elink.fcgi', {
-    dbfrom: 'gene',
-    db: targetDb,
-    id: geneUid,
-    retmode: 'json',
-  });
-
-  const response = await throttledFetch(url);
-  checkFetchStatus(response, 'elink');
-  const payload = (await response.json()) as any;
-  const linksets = Array.isArray(payload?.linksets) ? payload.linksets : [];
-  const linkset = linksets[0] || {};
-  const linksetsDb = Array.isArray(linkset?.linksetdbs) ? linkset.linksetdbs : [];
-  const firstLinkset = linksetsDb[0] || {};
-  const ids = Array.isArray(firstLinkset?.links) ? firstLinkset.links : [];
-
-  return ids.map(String);
+  return elink('gene', targetDb, [geneUid]);
 }
