@@ -4,7 +4,9 @@ const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
 
 const OPENAI_ENDPOINT = 'https://api.openai.com/v1/chat/completions';
-const ANTHROPIC_ENDPOINT = 'https://api.anthropic.com/v1/complete';
+const ANTHROPIC_ENDPOINT = 'https://api.anthropic.com/v1/messages';
+const ANTHROPIC_MODEL = 'claude-sonnet-4-6';
+const ANTHROPIC_VERSION = '2023-06-01';
 
 const DEFAULT_SYSTEM_PROMPT =
   'You are an assistant that extracts structured gene search queries from user input.';
@@ -59,14 +61,15 @@ async function requestAnthropic(prompt: string, systemPrompt: string): Promise<s
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      Authorization: `Bearer ${ANTHROPIC_API_KEY}`,
+      'x-api-key': ANTHROPIC_API_KEY!,
+      'anthropic-version': ANTHROPIC_VERSION,
     },
     body: JSON.stringify({
-      model: 'claude-3.5-sonic',
-      prompt: `${systemPrompt}\n\nHuman: ${prompt}\n\nAssistant:`,
-      max_tokens_to_sample: 800,
+      model: ANTHROPIC_MODEL,
+      system: systemPrompt,
+      messages: [{ role: 'user', content: prompt }],
+      max_tokens: 800,
       temperature: 0,
-      stop_sequences: ['\n\nHuman:'],
     }),
   });
 
@@ -76,5 +79,9 @@ async function requestAnthropic(prompt: string, systemPrompt: string): Promise<s
   }
 
   const payload = (await response.json()) as any;
-  return String(payload?.completion ?? '');
+  const blocks = payload?.content;
+  if (Array.isArray(blocks)) {
+    return blocks.map((b: any) => b?.text ?? '').join('');
+  }
+  return '';
 }
