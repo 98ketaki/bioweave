@@ -1,20 +1,63 @@
 import { useCallback, useState } from 'react';
 import './App.css';
 import { GraphView } from './GraphView';
+import { Chat, type ChatMessage } from './Chat';
 import type { GraphData, GraphNode } from './types';
-import { searchGene } from './api/gene';
-import { parseQuery } from './api/parse';
+import { searchGene, type GeneHit } from './api/gene';
+import { parseQuery, type ParsedGene } from './api/parse';
 import { fetchPubmedForGene } from './api/pubmed';
 import { fetchProteinsForGene } from './api/protein';
 
 const EMPTY: GraphData = { nodes: [], edges: [] };
 
+let msgCounter = 0;
+const nextId = () => `m${++msgCounter}`;
+
+function summarizeHit(hit: GeneHit, requested: string): string {
+  const parts = [`${hit.name} — ${hit.description || 'gene record'}.`];
+  if (hit.chromosome) parts.push(`Chromosome ${hit.chromosome}.`);
+  if (hit.summary) {
+    const firstSentence = hit.summary.split(/(?<=\.)\s/)[0];
+    parts.push(firstSentence);
+  }
+  if (hit.name.toLowerCase() !== requested.toLowerCase()) {
+    parts.unshift(`Matched "${requested}" →`);
+  }
+  return parts.join(' ');
+}
+
+function summarizeAnswer(
+  results: Array<{ requested: ParsedGene; hit: GeneHit | null }>,
+): string {
+  const hits = results.filter((r) => r.hit) as Array<{
+    requested: ParsedGene;
+    hit: GeneHit;
+  }>;
+  const misses = results.filter((r) => !r.hit);
+
+  if (hits.length === 0) {
+    return `No gene found for ${results.map((r) => `"${r.requested.term}"`).join(', ')}.`;
+  }
+
+  const lines: string[] = [];
+  if (hits.length === 1) {
+    lines.push(summarizeHit(hits[0].hit, hits[0].requested.term));
+  } else {
+    lines.push(`Found ${hits.length} genes:`);
+    for (const h of hits) lines.push(`• ${summarizeHit(h.hit, h.requested.term)}`);
+  }
+  for (const m of misses) {
+    lines.push(`No match for "${m.requested.term}".`);
+  }
+  lines.push('Click a node to expand to PubMed + Protein.');
+  return lines.join('\n');
+}
+
 export default function App() {
-  const [term, setTerm] = useState('BRCA1');
   const [graph, setGraph] = useState<GraphData>(EMPTY);
   const [selected, setSelected] = useState<GraphNode | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [busy, setBusy] = useState(false);
 
   const mergeGraph = (
     g: GraphData,
@@ -31,30 +74,55 @@ export default function App() {
     return { nodes: [...byId.values()], edges: nextEdges };
   };
 
-  const onSearch = async () => {
-    setLoading(true);
-    setError(null);
+  const onAsk = async (text: string) => {
+    const userMsg: ChatMessage = { id: nextId(), role: 'user', text };
+    const pendingId = nextId();
+    setMessages((m) => [
+      ...m,
+      userMsg,
+      { id: pendingId, role: 'assistant', text: 'Looking that up', pending: true },
+    ]);
+    setBusy(true);
     try {
-      // Natural language ("Look up TP53 in humans") is parsed server-side; falls
-      // back to a literal gene term if parsing is unavailable.
-      const { term: geneRef, organism } = await parseQuery(term);
-      const hit = await searchGene(geneRef, organism);
-      if (!hit) {
-        setError(`No gene found for "${term}"`);
-        return;
+      const parsed = await parseQuery(text);
+      const results = await Promise.all(
+        parsed.genes.map(async (g) => ({
+          requested: g,
+          hit: await searchGene(g.term, g.organism),
+        })),
+      );
+
+      const newNodes: GraphNode[] = [];
+      let firstNode: GraphNode | null = null;
+      for (const r of results) {
+        if (!r.hit) continue;
+        const node: GraphNode = {
+          id: `gene:${r.hit.uid}`,
+          kind: 'gene',
+          label: r.hit.name,
+          data: r.hit,
+        };
+        newNodes.push(node);
+        if (!firstNode) firstNode = node;
       }
-      const node: GraphNode = {
-        id: `gene:${hit.uid}`,
-        kind: 'gene',
-        label: hit.name,
-        data: hit,
-      };
-      setGraph({ nodes: [node], edges: [] });
-      setSelected(node);
+      setGraph((g) => mergeGraph(g, newNodes, []));
+      if (firstNode) setSelected(firstNode);
+
+      const answer = summarizeAnswer(results);
+      setMessages((m) =>
+        m.map((x) =>
+          x.id === pendingId ? { ...x, text: answer, pending: false } : x,
+        ),
+      );
     } catch (e: any) {
-      setError(e?.message ?? String(e));
+      const errText = `Sorry — ${e?.message ?? String(e)}`;
+      setMessages((m) =>
+        m.map((x) =>
+          x.id === pendingId ? { ...x, text: errText, pending: false } : x,
+        ),
+      );
     } finally {
-      setLoading(false);
+      setBusy(false);
     }
   };
 
@@ -63,7 +131,7 @@ export default function App() {
     if (node.expanded || node.kind !== 'gene') return;
 
     const uid = node.id.split(':')[1];
-    setLoading(true);
+    setBusy(true);
     try {
       const [papers, proteins] = await Promise.all([
         fetchPubmedForGene(uid),
@@ -105,34 +173,59 @@ export default function App() {
         };
       });
     } catch (e: any) {
-      setError(e?.message ?? String(e));
+      setMessages((m) => [
+        ...m,
+        {
+          id: nextId(),
+          role: 'assistant',
+          text: `Couldn't expand ${node.label}: ${e?.message ?? String(e)}`,
+        },
+      ]);
     } finally {
-      setLoading(false);
+      setBusy(false);
     }
   }, []);
 
+  const clearAll = () => {
+    setGraph(EMPTY);
+    setSelected(null);
+    setMessages([]);
+  };
+
   return (
-    <div style={{ padding: 20, fontFamily: 'system-ui, sans-serif' }}>
-      <h2 style={{ marginTop: 0 }}>Gene / Protein Knowledge Graph</h2>
-      <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
-        <input
-          value={term}
-          onChange={(e) => setTerm(e.target.value)}
-          onKeyDown={(e) => e.key === 'Enter' && onSearch()}
-          placeholder="Gene symbol, e.g. BRCA1"
-          style={{ padding: '6px 10px', fontSize: 14, flex: '0 0 240px' }}
-        />
-        <button onClick={onSearch} disabled={loading || !term.trim()}>
-          {loading ? 'Loading…' : 'Search'}
+    <div
+      style={{
+        padding: 20,
+        fontFamily: 'system-ui, sans-serif',
+        height: '100vh',
+        boxSizing: 'border-box',
+        display: 'flex',
+        flexDirection: 'column',
+      }}
+    >
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          marginBottom: 12,
+        }}
+      >
+        <h2 style={{ margin: 0 }}>Gene / Protein Knowledge Graph</h2>
+        <button onClick={clearAll} disabled={busy && messages.length === 0}>
+          Clear
         </button>
-        {error && (
-          <span style={{ color: '#b91c1c', alignSelf: 'center' }}>{error}</span>
-        )}
       </div>
 
-      <div style={{ display: 'flex', gap: 16 }}>
+      <div style={{ display: 'flex', gap: 16, flex: 1, minHeight: 0 }}>
+        <Chat
+          messages={messages}
+          onSubmit={onAsk}
+          disabled={busy}
+          placeholder='e.g. "Find the human gene for insulin"'
+        />
         <GraphView data={graph} onNodeClick={onNodeClick} />
-        <aside style={{ width: 320, fontSize: 13 }}>
+        <aside style={{ width: 240, flex: '0 0 240px', fontSize: 13, overflow: 'auto' }}>
           <h3 style={{ marginTop: 0 }}>Selected</h3>
           {selected ? (
             <>
@@ -158,10 +251,6 @@ export default function App() {
           )}
         </aside>
       </div>
-
-      <p style={{ color: '#666', fontSize: 12, marginTop: 12 }}>
-        Click the gene node to expand to PubMed + Protein. Drag nodes to rearrange.
-      </p>
     </div>
   );
 }
