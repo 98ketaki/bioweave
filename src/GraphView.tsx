@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import * as d3 from 'd3';
 import type { GraphData, GraphNode } from './types';
 
@@ -12,16 +12,29 @@ const COLORS: Record<GraphNode['kind'], string> = {
 interface Props {
   data: GraphData;
   onNodeClick?: (node: GraphNode) => void;
-  width?: number;
   height?: number;
 }
 
-export function GraphView({ data, onNodeClick, width = 900, height = 600 }: Props) {
-  const ref = useRef<SVGSVGElement | null>(null);
+export function GraphView({ data, onNodeClick, height = 600 }: Props) {
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const svgRef = useRef<SVGSVGElement | null>(null);
+  const [width, setWidth] = useState(800);
+
+  // Track container width so the SVG fills available space.
+  useEffect(() => {
+    if (!containerRef.current) return;
+    const el = containerRef.current;
+    const ro = new ResizeObserver((entries) => {
+      const w = entries[0]?.contentRect.width ?? el.clientWidth;
+      if (w > 0) setWidth(Math.floor(w));
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
 
   useEffect(() => {
-    if (!ref.current) return;
-    const svg = d3.select(ref.current);
+    if (!svgRef.current) return;
+    const svg = d3.select(svgRef.current);
     svg.selectAll('*').remove();
 
     // Work on copies — d3-force mutates.
@@ -33,6 +46,8 @@ export function GraphView({ data, onNodeClick, width = 900, height = 600 }: Prop
       .force('link', d3.forceLink(links).id((d: any) => d.id).distance(80))
       .force('charge', d3.forceManyBody().strength(-220))
       .force('center', d3.forceCenter(width / 2, height / 2))
+      .force('x', d3.forceX(width / 2).strength(0.05))
+      .force('y', d3.forceY(height / 2).strength(0.05))
       .force('collide', d3.forceCollide(28));
 
     const link = svg
@@ -52,21 +67,31 @@ export function GraphView({ data, onNodeClick, width = 900, height = 600 }: Prop
       .style('cursor', 'pointer')
       .on('click', (_e, d: any) => onNodeClick?.(d));
 
+    const radius = (d: any) => (d.kind === 'gene' ? 18 : 11);
+
     node
       .append('circle')
-      .attr('r', (d: any) => (d.kind === 'gene' ? 18 : 11))
+      .attr('r', radius)
       .attr('fill', (d: any) => COLORS[d.kind as GraphNode['kind']])
       .attr('stroke', '#fff')
       .attr('stroke-width', 2);
 
-    node
-      .append('text')
-      .text((d: any) => d.label)
-      .attr('x', 14)
-      .attr('y', 4)
-      .attr('font-size', 11)
-      .attr('font-family', 'system-ui, sans-serif')
-      .attr('fill', '#111');
+    const labelAttrs = (sel: any) =>
+      sel
+        .text((d: any) => d.label)
+        .attr('x', (d: any) => radius(d) + 4)
+        .attr('y', 4)
+        .attr('font-size', 11)
+        .attr('font-family', 'system-ui, sans-serif')
+        .attr('pointer-events', 'none');
+
+    labelAttrs(node.append('text'))
+      .attr('stroke', '#fafafa')
+      .attr('stroke-width', 3)
+      .attr('stroke-linejoin', 'round')
+      .attr('fill', 'none');
+
+    labelAttrs(node.append('text')).attr('fill', '#111');
 
     node.call(
       d3
@@ -102,11 +127,24 @@ export function GraphView({ data, onNodeClick, width = 900, height = 600 }: Prop
   }, [data, width, height, onNodeClick]);
 
   return (
-    <svg
-      ref={ref}
-      width={width}
-      height={height}
-      style={{ border: '1px solid #e5e7eb', borderRadius: 8, background: '#fafafa' }}
-    />
+    <div
+      ref={containerRef}
+      style={{
+        flex: 1,
+        minWidth: 0,
+        border: '1px solid #e5e7eb',
+        borderRadius: 8,
+        background: '#fafafa',
+        overflow: 'hidden',
+      }}
+    >
+      <svg
+        ref={svgRef}
+        width={width}
+        height={height}
+        viewBox={`0 0 ${width} ${height}`}
+        style={{ display: 'block' }}
+      />
+    </div>
   );
 }
