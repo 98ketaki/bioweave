@@ -21,5 +21,6 @@
     "erasableSyntaxOnly": true,
     "noFallthroughCasesInSwitch": true
   },
-  "include": ["src"]
+  "include": ["src"],
+  "exclude": ["src/gene_db", "src/parser", "src/app.ts", "src/demo.ts", "src/test-ncbi.ts"]
 }
