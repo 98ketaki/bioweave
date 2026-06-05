@@ -2,14 +2,20 @@ import { NCBI_BASE } from '../types';
 
 // Shared helpers for NCBI E-utilities. JSON where possible.
 //
+// This is the single low-level E-utilities client for the whole project — both
+// the browser graph app and the Node gene-resolution pipeline build on it.
+//
 // NCBI throttles unauthenticated traffic to ~3 req/sec per IP. We:
 //   - tag every request with tool/email (NCBI's "be polite" convention)
 //   - serialize all calls through a single in-process queue with a 350ms gap
-// If you set VITE_NCBI_API_KEY in .env.local, the limit goes to 10/sec.
+// Supplying an API key raises the limit to 10/sec. We read it from whichever
+// runtime we're in: VITE_NCBI_API_KEY (browser/Vite) or NCBI_API_KEY (Node).
 
 const TOOL = 'bioweave';
 const EMAIL = 'bioweave@example.com';
-const API_KEY = (import.meta as any).env?.VITE_NCBI_API_KEY as string | undefined;
+const API_KEY =
+  ((import.meta as any).env?.VITE_NCBI_API_KEY as string | undefined) ??
+  ((globalThis as any).process?.env?.NCBI_API_KEY as string | undefined);
 const MIN_GAP_MS = API_KEY ? 110 : 350;
 
 function withCommon(url: string): string {
