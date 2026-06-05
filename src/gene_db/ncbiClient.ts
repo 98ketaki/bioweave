@@ -4,15 +4,18 @@ import { esearch, esummary, elink } from '../api/ncbi';
 const DEFAULT_SEARCH_MAX = 10;
 
 function combineSearchTerm(query: string, organism?: OrganismInput, symbol?: string): string {
-  // When a concrete gene symbol is known, scope the search to the gene-name
-  // field. A bare `TP53` searches all fields and matches any record that merely
-  // mentions p53 (EGFR, APOE, ...), drowning the real gene in thousands of hits.
-  const sanitized = symbol?.trim() ? `${symbol.trim()}[Gene Name]` : query.trim();
+  // When we have a concrete gene reference, scope to the symbol field (matches
+  // official symbols and aliases like `p53`) OR the full-name field (so a name
+  // like `insulin` resolves to INS). A bare all-fields search instead ranks by
+  // gene "weight" and surfaces well-studied genes that merely mention the term
+  // (e.g. `insulin` or `TP53` would return EGFR/APOE/... noise).
+  const s = symbol?.trim();
+  const scoped = s ? `(${s}[Gene Name] OR ${s}[Gene Full Name])` : query.trim();
   if (!organism?.scientificName) {
-    return sanitized;
+    return scoped;
   }
 
-  return `${sanitized} AND ${organism.scientificName}[Organism]`;
+  return `${scoped} AND ${organism.scientificName}[Organism]`;
 }
 
 export type NCBISearchResponse = {

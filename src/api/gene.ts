@@ -21,13 +21,13 @@ export interface GeneHit {
 const HUMAN = { scientificName: 'Homo sapiens', commonName: 'human' };
 
 export async function searchGene(term: string): Promise<GeneHit | null> {
-  const symbol = term.trim();
+  const ref = term.trim();
 
-  // Mirror the pipeline's resolution order: a precise human symbol-scoped match
-  // first, then a broad human search, then any organism.
-  let search = await esearchGene(symbol, HUMAN, 1, symbol);
-  if (search.ids.length === 0) search = await esearchGene(symbol, HUMAN, 1);
-  if (search.ids.length === 0) search = await esearchGene(symbol, undefined, 1);
+  // Symbol-/name-scoped lookup: human first, then any organism. We never fall
+  // back to an all-fields search — that ranks by gene "weight" and returns
+  // well-studied genes that merely mention the term (e.g. "insulin" -> TP53).
+  let search = await esearchGene(ref, HUMAN, 1, ref);
+  if (search.ids.length === 0) search = await esearchGene(ref, undefined, 1, ref);
   if (search.ids.length === 0) return null;
 
   const record = normalizeGeneSummary(await esummaryGene(search.ids[0]));
