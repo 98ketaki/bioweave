@@ -3,8 +3,13 @@ import './App.css';
 import { GraphView } from './GraphView';
 import { Chat, type ChatMessage } from './Chat';
 import type { GraphData, GraphNode } from './types';
-import { searchGene, type GeneHit } from './api/gene';
-import { parseQuery, type ParsedGene } from './api/parse';
+import {
+  askQuestion,
+  fetchDetail,
+  type AskResult,
+  type Followup,
+  type DetailResult,
+} from './api/ask';
 import { fetchPubmedForGene } from './api/pubmed';
 import { fetchProteinsForGene } from './api/protein';
 
@@ -13,44 +18,45 @@ const EMPTY: GraphData = { nodes: [], edges: [] };
 let msgCounter = 0;
 const nextId = () => `m${++msgCounter}`;
 
-function summarizeHit(hit: GeneHit, requested: string): string {
-  const parts = [`${hit.name} — ${hit.description || 'gene record'}.`];
-  if (hit.chromosome) parts.push(`Chromosome ${hit.chromosome}.`);
-  if (hit.summary) {
-    const firstSentence = hit.summary.split(/(?<=\.)\s/)[0];
-    parts.push(firstSentence);
+function nodeFromDetail(d: DetailResult): GraphNode {
+  if (d.type === 'gene') {
+    return {
+      id: `gene:${d.record.geneUid}`,
+      kind: 'gene',
+      label: d.record.officialSymbol || d.record.fullName || d.record.geneUid,
+      data: d.record,
+    };
   }
-  if (hit.name.toLowerCase() !== requested.toLowerCase()) {
-    parts.unshift(`Matched "${requested}" →`);
-  }
-  return parts.join(' ');
+  return {
+    id: `protein:${d.record.proteinUid}`,
+    kind: 'protein',
+    label: d.record.accession || d.record.title.slice(0, 30),
+    data: d.record,
+  };
 }
 
-function summarizeAnswer(
-  results: Array<{ requested: ParsedGene; hit: GeneHit | null }>,
-): string {
-  const hits = results.filter((r) => r.hit) as Array<{
-    requested: ParsedGene;
-    hit: GeneHit;
-  }>;
-  const misses = results.filter((r) => !r.hit);
-
-  if (hits.length === 0) {
-    return `No gene found for ${results.map((r) => `"${r.requested.term}"`).join(', ')}.`;
+// Promote gene/protein citations from an answer into graph nodes, so the user
+// can see the entities they read about and expand them in the graph.
+function nodesFromAnswer(r: AskResult): GraphNode[] {
+  const nodes: GraphNode[] = [];
+  for (const c of r.citations) {
+    if (c.source === 'gene') {
+      nodes.push({
+        id: `gene:${c.id}`,
+        kind: 'gene',
+        label: c.label.replace(/\s*\(NCBI Gene\)\s*$/, ''),
+        data: c,
+      });
+    } else if (c.source === 'protein') {
+      nodes.push({
+        id: `protein:${c.id}`,
+        kind: 'protein',
+        label: c.label.split(' — ')[0] || c.label,
+        data: c,
+      });
+    }
   }
-
-  const lines: string[] = [];
-  if (hits.length === 1) {
-    lines.push(summarizeHit(hits[0].hit, hits[0].requested.term));
-  } else {
-    lines.push(`Found ${hits.length} genes:`);
-    for (const h of hits) lines.push(`• ${summarizeHit(h.hit, h.requested.term)}`);
-  }
-  for (const m of misses) {
-    lines.push(`No match for "${m.requested.term}".`);
-  }
-  lines.push('Click a node to expand to PubMed + Protein.');
-  return lines.join('\n');
+  return nodes;
 }
 
 export default function App() {
@@ -80,38 +86,28 @@ export default function App() {
     setMessages((m) => [
       ...m,
       userMsg,
-      { id: pendingId, role: 'assistant', text: 'Looking that up', pending: true },
+      { id: pendingId, role: 'assistant', text: 'Thinking', pending: true },
     ]);
     setBusy(true);
     try {
-      const parsed = await parseQuery(text);
-      const results = await Promise.all(
-        parsed.genes.map(async (g) => ({
-          requested: g,
-          hit: await searchGene(g.term, g.organism),
-        })),
-      );
-
-      const newNodes: GraphNode[] = [];
-      let firstNode: GraphNode | null = null;
-      for (const r of results) {
-        if (!r.hit) continue;
-        const node: GraphNode = {
-          id: `gene:${r.hit.uid}`,
-          kind: 'gene',
-          label: r.hit.name,
-          data: r.hit,
-        };
-        newNodes.push(node);
-        if (!firstNode) firstNode = node;
-      }
+      const result = await askQuestion(text);
+      const newNodes = nodesFromAnswer(result);
+      const firstGene = newNodes.find((n) => n.kind === 'gene');
       setGraph((g) => mergeGraph(g, newNodes, []));
-      if (firstNode) setSelected(firstNode);
+      if (firstGene) setSelected(firstGene);
 
-      const answer = summarizeAnswer(results);
       setMessages((m) =>
         m.map((x) =>
-          x.id === pendingId ? { ...x, text: answer, pending: false } : x,
+          x.id === pendingId
+            ? {
+                ...x,
+                text: result.answer,
+                citations: result.citations,
+                followups: result.followups,
+                usedSources: result.usedSources,
+                pending: false,
+              }
+            : x,
         ),
       );
     } catch (e: any) {
@@ -121,6 +117,27 @@ export default function App() {
           x.id === pendingId ? { ...x, text: errText, pending: false } : x,
         ),
       );
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const onFollowup = async (f: Followup) => {
+    setBusy(true);
+    try {
+      const detail = await fetchDetail(f.detail);
+      const node = nodeFromDetail(detail);
+      setGraph((g) => mergeGraph(g, [node], []));
+      setSelected({ ...node, data: detail.record });
+    } catch (e: any) {
+      setMessages((m) => [
+        ...m,
+        {
+          id: nextId(),
+          role: 'assistant',
+          text: `Couldn't load "${f.label}": ${e?.message ?? String(e)}`,
+        },
+      ]);
     } finally {
       setBusy(false);
     }
@@ -221,8 +238,9 @@ export default function App() {
         <Chat
           messages={messages}
           onSubmit={onAsk}
+          onFollowup={onFollowup}
           disabled={busy}
-          placeholder='e.g. "Find the human gene for insulin"'
+          placeholder='e.g. "What does TP53 do?"'
         />
         <GraphView data={graph} onNodeClick={onNodeClick} />
         <aside style={{ width: 240, flex: '0 0 240px', fontSize: 13, overflow: 'auto' }}>
