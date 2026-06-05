@@ -10,6 +10,7 @@
     "preview": "vite preview",
     "demo": "tsx src/demo.ts",
     "ask-demo": "tsx src/ask-demo.ts",
+    "ask": "tsx src/ask-cli.ts",
     "typecheck:backend": "tsc -p tsconfig.backend.json"
   },
   "dependencies": {

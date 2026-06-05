@@ -22,5 +22,5 @@
     "noFallthroughCasesInSwitch": true
   },
   "include": ["src"],
-  "exclude": ["src/gene_db", "src/protein_db", "src/qa", "src/parser", "src/server", "src/app.ts", "src/demo.ts", "src/ask-demo.ts", "src/test-ncbi.ts"]
+  "exclude": ["src/gene_db", "src/protein_db", "src/qa", "src/parser", "src/server", "src/app.ts", "src/demo.ts", "src/ask-demo.ts", "src/ask-cli.ts", "src/test-ncbi.ts"]
 }
