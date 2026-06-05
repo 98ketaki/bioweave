@@ -1,10 +1,8 @@
-// STEVE: PubMed module.
-//
-// Goal: given a gene UID, return up to N PubMed papers that mention it.
-// Use elink (dbfrom=gene, db=pubmed) to get PMIDs, then esummary on pubmed
-// to get title / authors / pubdate.
+// Gene -> PubMed papers: follow the gene->pubmed elink, then summarize each
+// paper's title, authors, and publication date.
 
-import { elink, esummary } from './ncbi';
+import { esummary } from './ncbi';
+import { elinkGeneToDb } from '../gene_db/ncbiClient';
 
 export interface PubmedHit {
   pmid: string;
@@ -12,11 +10,11 @@ export interface PubmedHit {
   authors?: string[];
   pubdate?: string;
   source?: string;
-  raw?: any;
+  raw?: unknown;
 }
 
 export async function fetchPubmedForGene(geneUid: string, limit = 5): Promise<PubmedHit[]> {
-  const pmids = (await elink('gene', 'pubmed', [geneUid])).slice(0, limit);
+  const pmids = (await elinkGeneToDb(geneUid, 'pubmed')).slice(0, limit);
   if (!pmids.length) return [];
   const result = await esummary('pubmed', pmids);
   return pmids.map((pmid) => {
@@ -24,7 +22,7 @@ export async function fetchPubmedForGene(geneUid: string, limit = 5): Promise<Pu
     return {
       pmid,
       title: r.title ?? '(no title)',
-      authors: (r.authors ?? []).map((a: any) => a.name),
+      authors: (r.authors ?? []).map((a: { name: string }) => a.name),
       pubdate: r.pubdate,
       source: r.source,
       raw: r,

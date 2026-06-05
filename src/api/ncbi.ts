@@ -13,9 +13,10 @@ import { NCBI_BASE } from '../types';
 
 const TOOL = 'bioweave';
 const EMAIL = 'bioweave@example.com';
-const API_KEY =
-  ((import.meta as any).env?.VITE_NCBI_API_KEY as string | undefined) ??
-  ((globalThis as any).process?.env?.NCBI_API_KEY as string | undefined);
+type EnvBag = { env?: Record<string, string | undefined> };
+const viteEnv = (import.meta as unknown as EnvBag).env;
+const nodeEnv = (globalThis as { process?: EnvBag }).process?.env;
+const API_KEY = viteEnv?.VITE_NCBI_API_KEY ?? nodeEnv?.NCBI_API_KEY;
 const MIN_GAP_MS = API_KEY ? 110 : 350;
 
 function withCommon(url: string): string {
