@@ -1,5 +1,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { parseInputToGeneDBRequest } from '../parser/index';
+import { ask } from '../qa/ask';
+import { resolveDetail } from '../qa/detail';
 
 // POST /api/parse — turn a natural-language request ("Look up TP53 in humans")
 // into a structured gene query using the AI parser. This runs server-side so the
@@ -7,6 +9,7 @@ import { parseInputToGeneDBRequest } from '../parser/index';
 // the browser. The response contains only the parsed gene query, nothing else.
 
 const MAX_QUERY_LEN = 500;
+const MAX_QUESTION_LEN = 1000;
 const MAX_BODY_BYTES = 10_000;
 
 function readJsonBody(req: IncomingMessage): Promise<unknown> {
@@ -50,5 +53,42 @@ export async function handleParse(req: IncomingMessage, res: ServerResponse): Pr
     const detail = err instanceof Error ? err.message : 'Unknown error';
     console.error('[api/parse] failed:', detail);
     sendJson(res, 502, { error: 'Could not understand the query.' });
+  }
+}
+
+// POST /api/ask — answer a natural-language question over gene/protein/pubmed.
+export async function handleAsk(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  try {
+    const body = (await readJsonBody(req)) as { question?: unknown };
+    const question = typeof body.question === 'string' ? body.question.trim() : '';
+    if (!question) return sendJson(res, 400, { error: 'Missing "question" string.' });
+    if (question.length > MAX_QUESTION_LEN) return sendJson(res, 400, { error: 'Question too long.' });
+
+    const result = await ask(question);
+    sendJson(res, 200, result);
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : 'Unknown error';
+    console.error('[api/ask] failed:', detail);
+    sendJson(res, 502, { error: 'Could not answer the question.' });
+  }
+}
+
+// POST /api/detail — full gene-DB or protein-DB record for a "know more" entity.
+export async function handleDetail(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  try {
+    const body = (await readJsonBody(req)) as { type?: unknown; uid?: unknown };
+    const type = body.type;
+    const uid = typeof body.uid === 'string' ? body.uid.trim() : '';
+    if (type !== 'gene' && type !== 'protein') {
+      return sendJson(res, 400, { error: 'Field "type" must be "gene" or "protein".' });
+    }
+    if (!uid) return sendJson(res, 400, { error: 'Missing "uid" string.' });
+
+    const result = await resolveDetail({ type, uid });
+    sendJson(res, 200, result);
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : 'Unknown error';
+    console.error('[api/detail] failed:', detail);
+    sendJson(res, 502, { error: 'Could not load record.' });
   }
 }

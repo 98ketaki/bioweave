@@ -12,5 +12,5 @@
     "skipLibCheck": true,
     "noEmit": true
   },
-  "include": ["src/gene_db", "src/parser", "src/server", "src/app.ts", "src/demo.ts", "src/test-ncbi.ts"]
+  "include": ["src/gene_db", "src/protein_db", "src/qa", "src/parser", "src/server", "src/app.ts", "src/demo.ts", "src/ask-demo.ts", "src/ask-cli.ts", "src/test-ncbi.ts"]
 }

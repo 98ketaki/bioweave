@@ -8,6 +8,9 @@ const ANTHROPIC_ENDPOINT = 'https://api.anthropic.com/v1/messages';
 const ANTHROPIC_MODEL = 'claude-sonnet-4-6';
 const ANTHROPIC_VERSION = '2023-06-01';
 
+const DEFAULT_SYSTEM_PROMPT =
+  'You are an assistant that extracts structured gene search queries from user input.';
+
 function getProvider() {
   if (OPENAI_API_KEY) {
     return 'openai' as const;
@@ -18,15 +21,15 @@ function getProvider() {
   throw new Error('No AI API key is configured. Set OPENAI_API_KEY or ANTHROPIC_API_KEY in .env.');
 }
 
-export async function queryAI(prompt: string): Promise<string> {
+export async function queryAI(prompt: string, systemPrompt: string = DEFAULT_SYSTEM_PROMPT): Promise<string> {
   const provider = getProvider();
   if (provider === 'openai') {
-    return requestOpenAI(prompt);
+    return requestOpenAI(prompt, systemPrompt);
   }
-  return requestAnthropic(prompt);
+  return requestAnthropic(prompt, systemPrompt);
 }
 
-async function requestOpenAI(prompt: string): Promise<string> {
+async function requestOpenAI(prompt: string, systemPrompt: string): Promise<string> {
   const response = await fetch(OPENAI_ENDPOINT, {
     method: 'POST',
     headers: {
@@ -36,7 +39,7 @@ async function requestOpenAI(prompt: string): Promise<string> {
     body: JSON.stringify({
       model: 'gpt-4.1-mini',
       messages: [
-        { role: 'system', content: 'You are an assistant that extracts structured gene search queries from user input.' },
+        { role: 'system', content: systemPrompt },
         { role: 'user', content: prompt },
       ],
       temperature: 0,
@@ -53,7 +56,7 @@ async function requestOpenAI(prompt: string): Promise<string> {
   return String(payload?.choices?.[0]?.message?.content ?? '');
 }
 
-async function requestAnthropic(prompt: string): Promise<string> {
+async function requestAnthropic(prompt: string, systemPrompt: string): Promise<string> {
   const response = await fetch(ANTHROPIC_ENDPOINT, {
     method: 'POST',
     headers: {
@@ -63,7 +66,7 @@ async function requestAnthropic(prompt: string): Promise<string> {
     },
     body: JSON.stringify({
       model: ANTHROPIC_MODEL,
-      system: 'You are an assistant that extracts structured gene search queries from user input.',
+      system: systemPrompt,
       messages: [{ role: 'user', content: prompt }],
       max_tokens: 800,
       temperature: 0,
